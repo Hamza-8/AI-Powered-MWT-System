@@ -1,0 +1,61 @@
+seed: 42
+output_dir: outputs
+log_dir: outputs/tensorboard
+checkpoint_dir: outputs/checkpoints
+
+input:
+  num_freq: 16
+  tx: 24
+  rx: 24
+  use_mask_channel: false
+  input_format: tensor  # tensor or flattened
+
+model:
+  encoder_channels: [32, 32, 64, 64, 128, 128, 256, 256]
+  # TODO: confirm kernel sizes from the paper's architecture figure.
+  encoder_kernels: [7, 7, 5, 5, 3, 3, 3, 3]
+  encoder_strides: [2, 1, 4, 1, 2, 1, 4, 1]
+  encoder_padding: null
+  reshape:
+    channels: 256
+    depth: 4
+    height: 4
+    width: 4
+  decoder_channels: [128, 64, 32]
+  # TODO: confirm transposed-conv kernel sizes/strides from the paper's architecture figure.
+  decoder_kernels: [4, 4, 4, 4]
+  decoder_strides: [2, 2, 2, 2]
+  decoder_padding: [1, 1, 1, 1]
+  decoder_output_padding: [0, 0, 0, 0]
+
+output:
+  depth: 64
+  height: 64
+  width: 64
+  block_mode: false
+  block_splits: [2, 2, 2]
+  block_index: 0
+
+training:
+  batch_size: 4
+  num_epochs: 2
+  learning_rate: 0.0005
+  weight_decay: 1.0e-5
+  mse_weight: 1.0
+  l1_weight: 0.1
+  use_grad_loss: false
+  grad_loss_weight: 0.05
+  use_psnr: false
+  num_workers: 0
+  amp: true
+  budget_augmentation: true
+  budgets: [1.0, 0.5, 0.25, 0.1]
+
+scheduler:
+  t_max: 10
+
+dataset:
+  train_size: 32
+  val_size: 8
+  test_size: 8
+
