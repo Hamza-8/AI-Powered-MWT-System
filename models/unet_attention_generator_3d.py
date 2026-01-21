@@ -107,16 +107,19 @@ class AttentionUNetGenerator3D(nn.Module):
         self.decoder: nn.ModuleList = nn.ModuleList()
         self.attention_gates: nn.ModuleList = nn.ModuleList()
 
+        # Decoder upsamplers must map prev_ch -> ch; otherwise channels mismatch after first stage.
+        prev_ch = feature_channels[-1]
         for ch in reversed(feature_channels):
             stride = (2, 2, 2) if downsample_f else (1, 2, 2)
             self.upsamplers.append(
-                nn.ConvTranspose3d(ch, ch, kernel_size=stride, stride=stride)
+                nn.ConvTranspose3d(prev_ch, ch, kernel_size=stride, stride=stride)
             )
             if attention:
-                self.attention_gates.append(AttentionGate3D(ch, ch, ch // 2))
+                self.attention_gates.append(AttentionGate3D(ch, ch, max(1, ch // 2)))
             else:
                 self.attention_gates.append(nn.Identity())
             self.decoder.append(DoubleConv3D(ch * 2, ch, kernel_size, spectral_norm_on))
+            prev_ch = ch
 
         self.output_conv = nn.Sequential(
             nn.Conv3d(feature_channels[0], out_channels, kernel_size=1),
