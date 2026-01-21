@@ -1,0 +1,36 @@
+data:
+  f: 50
+  a: 24
+  snr_db: 20.0
+  length: 200
+
+generator:
+  channels: [32, 64, 128, 256]
+  kernel_size: [3, 3, 3]  # TODO: evaluate (3,3,5) to emphasize frequency correlations.
+  downsample_f: false
+  res_blocks: 4
+  bottleneck_dilation: 1  # TODO: insert exact dilation pattern from the paper.
+  attention: true
+  spectral_norm: false
+
+discriminator:
+  channels: [32, 64, 128, 256]
+  downsample_f: false
+  spectral_norm: true
+
+loss:
+  lambda_cyc: 10.0
+  lambda_id: 5.0
+
+training:
+  batch_size: 4
+  epochs: 2
+  steps_per_epoch: 20
+  lr: 0.0002
+  betas: [0.5, 0.999]
+  buffer_size: 50
+  sample_every: 5
+  amp: false
+
+paths:
+  output_dir: outputs
