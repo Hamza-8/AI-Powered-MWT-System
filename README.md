@@ -1,4 +1,4 @@
-# 3-D FCERNN (PyTorch 2.x)
+# 3-D MSRNN (PyTorch 2.x)
 
 This repo provides a complete runnable PyTorch 2.x implementation of the 3-D FCERNN reconstruction network from the Diagnostics 2022 paper **"A 3-D Full Convolution Electromagnetic Reconstruction Neural Network (3-D FCERNN) for Fast Super-Resolution Electromagnetic Inversion of Human Brain"**. It runs end-to-end on dummy data with correct shapes and includes training, evaluation, checkpointing, TensorBoard logging, and block-based output stitching.
 
