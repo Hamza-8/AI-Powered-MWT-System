@@ -16,7 +16,12 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-DOMAINS = {"raw_s", "calibrated_delta", "decluttered_target"}
+DOMAINS = {"raw_s", "calibrated_delta_s", "decluttered_target"}
+
+
+def normalize_domain(domain):
+    # Explicit legacy spelling alias; physical domains are never interchanged.
+    return "calibrated_delta_s" if domain == "calibrated_delta" else domain
 QUALIFICATION_VERSION = 1
 
 
@@ -31,13 +36,53 @@ def _digest(value):
     return value
 
 
+def _canonical_context_value(key, value):
+    dimensions = {"tx_positions_mm": 2, "rx_positions_mm": 2, "source_excitation": 2,
+                  "tx_orientations": 2, "rx_orientations": 2, "calibration_features": 1}
+    if key in dimensions:
+        x = torch.as_tensor(value).detach().cpu().to(torch.float64)
+        rank = dimensions[key]
+        if x.ndim == rank+1:
+            if not torch.allclose(x, x[:1].expand_as(x), atol=1e-6, rtol=0):
+                raise ValueError("a batch cannot mix independently bound hardware/source/calibration contexts")
+            x = x[0]
+        if x.ndim != rank or not torch.isfinite(x).all():
+            raise ValueError(f"invalid qualification context {key}")
+        # Stable across float32 export versus JSON double and singleton batching.
+        x = torch.round(x*1e6)/1e6
+        return x.tolist()
+    if isinstance(value, (list, tuple)) and value and all(v == value[0] for v in value):
+        return value[0]
+    return _digest(value)
+
+
 def context_hash(context):
-    """Bind qualification to hardware/source/calibration/grid, excluding sample data."""
+    """Bind fixed headset/source/calibration context, invariant to batch repeats.
+
+    Geometry descriptors are checked against separately predeclared qualified
+    ranges, rather than pinning a new qualification to each object's geometry.
+    """
     keys = ("layout_id", "calibration_id", "grid_id", "material_library_id", "source_id",
             "tx_positions_mm", "rx_positions_mm", "tx_orientations", "rx_orientations",
-            "source_excitation", "geometry_features", "calibration_features")
-    bound = {k: context[k] for k in keys if k in context}
-    return hashlib.sha256(json.dumps(_digest(bound), sort_keys=True, allow_nan=False).encode()).hexdigest()
+            "source_excitation", "calibration_features")
+    bound = {k: _canonical_context_value(k, context[k]) for k in keys if k in context}
+    bound["geometry_features_present"] = "geometry_features" in context
+    return hashlib.sha256(json.dumps(bound, sort_keys=True, allow_nan=False).encode()).hexdigest()
+
+
+def _geometry_in_bounds(context, bounds):
+    if "geometry_features" not in context:
+        return bounds is None
+    if bounds is None:
+        return False
+    values = torch.as_tensor(context["geometry_features"]).detach().cpu().to(torch.float64)
+    ranges = torch.as_tensor(bounds, dtype=torch.float64)
+    if values.ndim not in (1, 2) or values.shape[-1] != 4 or ranges.shape != (4, 2):
+        return False
+    return bool(torch.isfinite(values).all() and torch.isfinite(ranges).all()
+                and (ranges[:, 0] <= ranges[:, 1]).all()
+                and (values >= ranges[:, 0]-1e-6).all()
+                and (values <= ranges[:, 1]+1e-6).all())
 
 
 def weights_hash(operator):
@@ -60,6 +105,7 @@ class HeadsetForwardOperator(nn.Module):
                  property_scales=(44.0, 0.8), property_offsets=(1.0, 0.0),
                  context_dim=8):
         super().__init__()
+        domain = normalize_domain(domain)
         if domain not in DOMAINS:
             raise ValueError(f"unknown signal domain {domain}")
         if context_dim != 8:
@@ -202,7 +248,8 @@ class QualificationThresholds:
 
 def qualification_report(operator, metrics, context, frequencies_ghz, *,
                          training_groups, validation_groups, coverage,
-                         thresholds=None, scientific=True, property_bounds=None):
+                         thresholds=None, scientific=True, property_bounds=None,
+                         geometry_feature_bounds=None):
     """Build independently measured gate report; no fabricated missing metrics.
 
     ``coverage`` lists held-out region/source/contrast-sign cases actually tested.
@@ -226,15 +273,19 @@ def qualification_report(operator, metrics, context, frequencies_ghz, *,
             reasons.append(f"metric_gate_failed:{name}")
     if property_bounds is None:
         reasons.append("missing_property_domain_bounds")
+    if not _geometry_in_bounds(context, geometry_feature_bounds):
+        reasons.append("missing_or_out_of_range_geometry_feature_bounds")
     report = {"version": QUALIFICATION_VERSION, "qualified": not reasons,
               "scientific": bool(scientific), "fixture_eligible": (not scientific and
                 all(not r.startswith("metric_gate_failed") for r in reasons)),
               "reasons": reasons, "domain": operator.domain,
               "weights_sha256": weights_hash(operator), "context_sha256": context_hash(context),
               "frequencies_ghz": torch.as_tensor(frequencies_ghz).tolist(),
-              "thresholds": asdict(thresholds), "metrics": dict(metrics),
+              "thresholds": asdict(thresholds),
+              "metrics": {k: (float(v) if v is not None and math.isfinite(float(v)) else None) for k,v in metrics.items()},
               "training_groups": list(training_groups), "validation_groups": list(validation_groups),
-              "coverage": sorted(coverage), "property_bounds": property_bounds}
+              "coverage": sorted(coverage), "property_bounds": property_bounds,
+              "geometry_feature_bounds": geometry_feature_bounds}
     operator.qualification_report = report
     return report
 
@@ -250,10 +301,14 @@ def require_qualified_operator(operator, report=None, context=None, domain=None,
         raise ValueError("Phi is unqualified: " + ", ".join(report.get("reasons", [])))
     if report.get("weights_sha256") != weights_hash(operator):
         raise ValueError("Phi weights do not match qualification report")
-    if domain is not None and (domain != operator.domain or report.get("domain") != domain):
+    domain = normalize_domain(domain)
+    if domain is not None and (domain != operator.domain or normalize_domain(report.get("domain")) != domain):
         raise ValueError("Phi measurement domain mismatch")
-    if context is not None and report.get("context_sha256") != context_hash(context):
-        raise ValueError("Phi hardware/source/calibration context mismatch")
+    if context is not None:
+        if report.get("context_sha256") != context_hash(context):
+            raise ValueError("Phi hardware/source/calibration context mismatch")
+        if not _geometry_in_bounds(context, report.get("geometry_feature_bounds")):
+            raise ValueError("Phi queried outside qualified geometry feature domain")
     return report
 
 
@@ -270,6 +325,7 @@ class PhysicsConsistency(nn.Module):
     def __init__(self, operator, qualification=None, domain="calibrated_delta",
                  require_qualified=True, allow_fixture=False):
         super().__init__()
+        domain = normalize_domain(domain)
         if domain not in DOMAINS:
             raise ValueError("unknown observation domain")
         self.operator = freeze_operator(operator)
@@ -297,6 +353,10 @@ class PhysicsConsistency(nn.Module):
         allowed = report["frequencies_ghz"]
         if any(not any(abs(float(v)-float(a)) < 1e-5 for a in allowed) for v in f):
             raise ValueError("Phi queried outside qualified frequency support")
+        if baseline_properties is not None and properties.ndim == 6 and baseline_properties.ndim == 5:
+            if not context.get("constant_spectrum", False):
+                raise ValueError("dispersive monitoring needs frequency-resolved baseline properties")
+            baseline_properties = baseline_properties[:, :, None].expand_as(properties)
         bounds = report.get("property_bounds")
         if bounds is not None:
             for channel in range(2):
@@ -305,8 +365,12 @@ class PhysicsConsistency(nn.Module):
                 detached = checked_properties[:, channel].detach()
                 if (detached < lo).any() or (detached > hi).any():
                     raise ValueError("inverse state outside qualified physical property domain")
+                if baseline_properties is not None:
+                    baseline_channel = baseline_properties[:, channel].detach()
+                    if (baseline_channel < lo).any() or (baseline_channel > hi).any():
+                        raise ValueError("baseline state outside qualified physical property domain")
         if baseline_properties is None:
-            if observation_domain not in (None, self.domain):
+            if normalize_domain(observation_domain) not in (None, self.domain):
                 raise ValueError("absolute consistency requires matching original calibrated observations")
             predicted = self.operator(properties, frequencies_ghz, context)
         else:

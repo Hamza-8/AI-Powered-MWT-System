@@ -47,3 +47,16 @@ def test_phase_metrics_ignore_unobserved_and_zero_amplitudes():
     metrics=paired_complex_metrics(p,t,mask)
     assert metrics['phase_mae_rad'] is None
     assert metrics['complex_mae']==0
+
+def test_cpu_amp_request_falls_back_and_saves_separate_scalers():
+    gan=CycleGAN3D({'channels':[4,8,8],'res_blocks':1,'spectral_norm':False})
+    trainer=GANTrainer(gan,amp=True,max_grad_norm=1.,buffer_size=0)
+    assert trainer.amp_requested and not trainer.amp_enabled
+    x=torch.randn(1,2,3,6,6);mask=torch.ones(1,1,3,6,6,dtype=torch.bool)
+    trainer.step(x,x,mask,mask,torch.tensor([.6,.8,1.]),paired=True)
+    state=trainer.state_dict()
+    assert 'scaler_G' in state and 'scaler_D' in state
+    assert not state['amp_active']
+    restored=GANTrainer(gan,amp=False)
+    restored.load_state_dict(state)
+    assert restored.steps==1

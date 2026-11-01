@@ -1,0 +1,14 @@
+{
+  "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "torch": "2.5.1+cpu",
+  "numpy": "2.5.4",
+  "scipy": "1.18.1",
+  "h5py": "3.16.0",
+  "pytest": "9.2.0",
+  "pyyaml": "6.0.3",
+  "cuda_available": false,
+  "gpu_validation": "unrun",
+  "full_experiment": "not launched",
+  "qualified_phi": "none"
+}

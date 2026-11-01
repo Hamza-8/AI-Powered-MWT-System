@@ -96,3 +96,58 @@ def test_pipeline_subspace_adapter_bindings_and_hidden_isolation():
     pipeline.trained_routing={'declutterer':False,'subspace':False}
     with pytest.raises(ValueError,match='routing'):
         pipeline(y,mask,enable_subspace=True)
+
+def test_batched_spectral_queries_keep_query_axis():
+    model=MSRNN(tiny_config());y,mask=inputs()
+    output=model(y.expand(2,-1,-1,-1,-1),mask.expand(2,-1,-1,-1,-1))
+    q=torch.tensor([[.6,.85],[.7,.85]])
+    spectral=model.spectral_properties(output,q)
+    assert spectral.shape==(2,2,2,16,16,16)
+    assert torch.equal(spectral[:,:,1],output['refined'])
+
+def test_c_explicit_fixture_original_domain_and_gradients():
+    from microscan.physics import HeadsetForwardOperator,qualification_report
+    phi=HeadsetForwardOperator(width=2,latent_dim=8)
+    context={'tx_positions_mm':[[0.,0.,0.]]*6,'rx_positions_mm':[[0.,0.,0.]]*6,
+             'source_excitation':[[1.,0.]]*6,'layout_id':'synthetic_C_mechanism_only',
+             'calibration_id':'fixture','constant_spectrum':True,
+             'observation_domain':phi.domain,'mechanism_fixture':True}
+    names=['full_relative_rmse','differential_relative_rmse','noise_relative_rmse','worst_channel_relative_rmse','roi_relative_rmse']
+    phi.qualification_report=qualification_report(phi,{n:0. for n in names},context,[.6+.05*i for i in range(10)],
+        training_groups=['synthetic_train'],validation_groups=['synthetic_validation'],
+        coverage=['healthy','lesion','positive_change','negative_change','sources','regions'],scientific=False,
+        property_bounds=[[-1000.,1000.],[-1000.,1000.]])
+    assert not phi.qualification_report['qualified']
+    model=MSRNN(tiny_config());y,mask=inputs()
+    with pytest.raises(ValueError,match='physics_observations'):
+        model(y,mask,physics_mode='C',phi=phi,physics_context=context)
+    output=model(y,mask,physics_mode='C',phi=phi,physics_context=context,physics_observations=y*.01)
+    assert output['physics_active']=='C'
+    output['refined'].mean().backward()
+    assert phi.calls>0
+    assert all(p.grad is None and not p.requires_grad for p in phi.parameters())
+    assert any(p.grad is not None and p.grad.abs().sum()>0 for p in model.parameters())
+    with pytest.raises(ValueError,match='domain'):
+        model(y,mask,physics_mode='C',phi=phi,physics_context={**context,'observation_domain':'decluttered_target'},physics_observations=y)
+
+def test_monitoring_invalid_registration_and_baseline_gate():
+    model=MSRNN(tiny_config());y,mask=inputs();baseline=torch.ones(1,2,16,16,16)
+    bad=model(y,mask,baseline=baseline,mode='monitoring',context_validity={'baseline':True,'measurement_registration':False})
+    assert not bad['measurement_valid'].any()
+    assert not bad['absolute_valid'].any()
+    valid_measurement=model(y,mask,baseline=baseline,mode='monitoring',context_validity={'baseline':False,'measurement_registration':True})
+    assert valid_measurement['measurement_valid'].all()
+    assert not valid_measurement['absolute_valid'].any()
+
+def test_component_physical_coordinates_signed_growth_and_missing_roi():
+    from microscan.pipeline import component_changes
+    import numpy as np
+    probability=torch.zeros(1,1,4,4,4);probability[0,0,1,2,3]=.9
+    grid=(np.arange(4)*2.,np.arange(4)*3.,np.arange(4)*4.)
+    component=connected_components(probability,grid,label_mode='binary')[0]
+    assert component['center_xyz_mm']==[6.,6.,4.]
+    assert component['volume_mm3']==24.
+    baseline={**component,'volume_mm3':48.}
+    result=component_changes([component],[baseline])
+    assert result[0]['volume_change_mm3']==-24.
+    assert component_changes([],[baseline],roi_valid=False)[0]['volume_change_mm3'] is None

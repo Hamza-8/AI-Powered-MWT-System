@@ -188,8 +188,9 @@ def validate_manifest(manifest):
         if missing:raise ValueError(f'missing sample metadata {missing}')
         if s['id'] in ids:raise ValueError('duplicate sample id')
         ids.add(s['id'])
-        if s['split'] not in ('train','validation','test'):raise ValueError('invalid split')
+        if s['split'] not in ('train','validation','test','inference'):raise ValueError('invalid split')
         for key in ('subject_id','head_id','geometry_id','sequence_id'):
+            if s['split']=='inference':continue
             identity=(key,str(s[key]))
             if identity in seen and seen[identity]!=s['split']:raise ValueError(f'{key} leakage across splits')
             seen[identity]=s['split']
@@ -198,10 +199,14 @@ def validate_manifest(manifest):
         if s['domain'] not in ('raw_s','calibrated_delta_s','decluttered_target','current_minus_baseline'):raise ValueError('unknown measurement domain')
         f=np.asarray(s['frequencies_ghz'],float)
         if f.ndim!=1 or (f<=0).any() or len(np.unique(f))!=len(f):raise ValueError('invalid frequency grid')
-        if s.get('mode')=='monitoring' and not s.get('registration',{}).get('measurement_compatible',False):
-            if s.get('difference_path'):raise ValueError('cannot use precomputed unregistered differences')
+        if s.get('mode') in ('monitoring','baseline_tracking') or s.get('domain')=='current_minus_baseline':
+            reg=s.get('registration',{})
+            if s.get('difference_path') and not all(reg.get(k,False) for k in ('same_subject','measurement_compatible','calibration_compatible')):
+                raise ValueError('cannot use precomputed unregistered differences')
+        if s.get('roi_path') and s.get('roi_source') not in ('clinician','prior_baseline_prediction','previous_frame_prediction'):
+            raise ValueError('ROI requires independent prior/clinician provenance; current labels cannot condition inference')
         if s.get('label_schema') and not s.get('label_path'):raise ValueError('label schema requires actual labels')
-    return {'schema_version':1,'samples':len(samples),'split_counts':{k:sum(s['split']==k for s in samples) for k in ('train','validation','test')},'valid':True}
+    return {'schema_version':1,'samples':len(samples),'split_counts':{k:sum(s['split']==k for s in samples) for k in ('train','validation','test','inference')},'valid':True}
 
 
 class ManifestDataset(Dataset):
@@ -232,40 +237,74 @@ class ManifestDataset(Dataset):
         shape=(len(s['frequencies_ghz']),len(s['physical_ports']),len(s['physical_ports']))
         if raw.shape!=shape:raise ValueError('measurement shape/metadata mismatch')
         mask=np.asarray(self._array(s['mask_path']),bool) if s.get('mask_path') else np.ones(shape,bool)
+        raw_mask=mask.copy()
         reference=self._array(s['reference_path']) if s.get('reference_path') else None
         rm=self._array(s['reference_mask_path']) if s.get('reference_mask_path') else None
         if s.get('domain')=='raw_s' and reference is None:calibrated,mask=calibrate(raw,None,mask)
         else:calibrated,mask=calibrate(raw,reference,mask,rm)
-        if s.get('mode')=='monitoring' and not s.get('registration',{}).get('measurement_compatible',False):raise ValueError('monitoring needs registered acquisition or recalibration')
+        measurement_registered=all(s.get('registration',{}).get(k,False) for k in ('same_subject','measurement_compatible','calibration_compatible'))
+        if (s.get('mode') in ('monitoring','baseline_tracking') or s.get('domain')=='current_minus_baseline' or s.get('baseline_signal_path')) and not measurement_registered:
+            raise ValueError('monitoring baseline subtraction requires same subject, compatible measurement pose and calibration; recalibrate/register first')
         signals=complex_to_channels(calibrated);mt=torch.from_numpy(mask[None].copy())
         if self.preprocessing:signals=self.preprocessing.transform(signals,mt)
-        out={'signals':signals,'mask':mt,'frequencies_ghz':torch.tensor(s['frequencies_ghz'],dtype=torch.float32),'raw_signals':complex_to_channels(raw,mask),'metadata':s.copy()}
-        for source,key in [('target_path','target'),('roi_path','roi'),('baseline_target_path','baseline'),('label_path','labels'),('label_validity_path','label_validity'),('clean_signal_path','clean_signals'),('material_ids_path','material_ids'),('repeated_signal_path','repeated_signals'),('stable_mask_path','stable_mask'),('baseline_spectral_path','baseline_spectral_target')]:
+        actual_domain='calibrated_delta_s' if reference is not None and s['domain']=='raw_s' else s['domain']
+        metadata={**s,'stored_measurement_domain':s['domain'],'domain':actual_domain}
+        out={'signals':signals,'mask':mt,'frequencies_ghz':torch.tensor(s['frequencies_ghz'],dtype=torch.float32),'raw_signals':complex_to_channels(raw,mask),'metadata':metadata}
+        for source,key in [('target_path','target'),('target_validity_path','target_validity'),('object_mask_path','object_mask'),('roi_path','roi'),('baseline_target_path','baseline'),('label_path','labels'),('label_validity_path','label_validity'),('clean_signal_path','clean_signals'),('pair_signal_path','pair_signals'),('pair_clean_signal_path','pair_clean_signals'),('material_ids_path','material_ids'),('repeated_signal_path','repeated_signals'),('stable_mask_path','stable_mask'),('baseline_spectral_path','baseline_spectral_target'),('noise_scale_path','noise_scale'),('noise_covariance_path','noise_covariance'),('roi_channel_mask_path','roi_channel_mask')]:
             if s.get(source):
                 a=np.array(self._array(s[source]),copy=True)
-                if key.endswith('signals'):a=complex_to_channels(a,mask)
+                if key.endswith('signals'):
+                    mask_key='repeated_mask_path' if key=='repeated_signals' else 'clean_mask_path' if key=='clean_signals' else None
+                    signal_mask=np.asarray(self._array(s[mask_key]),bool) if mask_key and s.get(mask_key) else mask
+                    a=complex_to_channels(a,signal_mask)
+                    if mask_key and s.get(mask_key):out[mask_key.replace('_path','')]=torch.from_numpy(signal_mask[None].copy())
                 else:a=torch.from_numpy(a)
+                if key in ('target','baseline','spectral_target','baseline_spectral_target','roi'):a=a.float()
                 out[key]=a
         if 'target' in out and tuple(out['target'].shape)!=(2,*s['grid']['shape_zyx']):raise ValueError('target shape/metadata mismatch')
         if 'labels' in out and 'label_validity' not in out:out['label_validity']=out['labels']>=0
+        if actual_domain=='current_minus_baseline':
+            out['difference']=complex_to_channels(calibrated);out['difference_mask']=mt.clone()
         if s.get('baseline_signal_path'):
             base=self._array(s['baseline_signal_path']);bm=self._array(s['baseline_mask_path']) if s.get('baseline_mask_path') else np.ones(shape,bool)
-            diff,dm=calibrate(raw,base,mask,bm)
+            diff,dm=calibrate(raw,base,raw_mask,bm)
             out['difference']=complex_to_channels(diff);out['difference_mask']=torch.from_numpy(dm[None].copy())
+            bcal,bvalid=calibrate(base,reference,bm,rm)
+            out['baseline_observations']=complex_to_channels(bcal);out['baseline_mask']=torch.from_numpy(bvalid[None].copy())
         if s.get('spectral_table_path') and 'material_ids' in out:
             table=np.array(self._array(s['spectral_table_path']),copy=True)
-            # [materials,F,2] -> [2,F,Z,Y,X], labels only.
+            # Query actual library spectra; label IDs never enter model context.
             mids=out['material_ids'].long()
             if mids.min()<0 or mids.max()>=table.shape[0]:raise ValueError('invalid supervised material id')
-            out['spectral_target']=torch.from_numpy(table)[mids].movedim((-1,-2),(0,1))
+            library_grid=np.asarray(s.get('spectral_table_frequencies_ghz',s['frequencies_ghz']),float)
+            if table.shape[1:]!=(len(library_grid),2):raise ValueError('spectral table requires [materials,frequency,2]')
+            query=[]
+            for f in s['frequencies_ghz']:
+                match=np.flatnonzero(np.isclose(library_grid,f,rtol=0,atol=1e-7))
+                if len(match)!=1:raise ValueError('material library lacks a unique observed query frequency')
+                query.append(int(match[0]))
+            out['spectral_target']=torch.from_numpy(table[:,query])[mids].movedim((-1,-2),(0,1)).float()
+            if 'target' not in out:
+                ref=np.flatnonzero(np.isclose(library_grid,float(s['reference_frequency_ghz']),rtol=0,atol=1e-7))
+                if len(ref)!=1:raise ValueError('provide primary property labels at fixed reference frequency')
+                out['target']=torch.from_numpy(table[:,int(ref[0])])[mids].movedim(-1,0).float()
         if s.get('spectral_target_path'):
             out['spectral_target']=torch.from_numpy(np.array(self._array(s['spectral_target_path']),copy=True))
+        if s.get('noise_scale') is not None:out['noise_scale']=torch.tensor(s['noise_scale'],dtype=torch.float32)
+        if s.get('baseline_spectral_context_path'):
+            if s.get('baseline_spectral_provenance') not in ('registered_prior_prediction','verified_known_phantom'):
+                raise ValueError('baseline spectral conditioning requires explicit prior-prediction/known-phantom provenance')
+            prior=np.array(self._array(s['baseline_spectral_context_path']),copy=True)
+            if prior.shape!=(2,len(s['frequencies_ghz']),*s['grid']['shape_zyx']):
+                raise ValueError('baseline spectral context requires [2,F,Z,Y,X]')
+            out['baseline_spectral']=torch.from_numpy(prior).float()
+        if 'baseline' in out:out['baseline_target']=out['baseline']
         # Context never comes from current supervised labels or material IDs.
-        out['mode']=s.get('mode','snapshot');out['domain']=s['domain']
+        out['mode']=s.get('mode','snapshot');out['domain']=actual_domain
         registration=s.get('registration',{})
         bv=bool(s.get('baseline_valid',False)) and all(registration.get(k,False) for k in ('same_subject','measurement_compatible','calibration_compatible','grid_compatible'))
         out['baseline_valid']=torch.tensor(bv)
-        out['context_validity']={'baseline':torch.tensor(bv),'roi':torch.tensor('roi' in out),'observations':torch.tensor(bool(mask.any()))}
+        out['context_validity']={'baseline':torch.tensor(bv),'roi':torch.tensor('roi' in out),'observations':torch.tensor(bool(mask.any())),'measurement_registration':torch.tensor(measurement_registered)}
         if s.get('context_validity'):
             for key,value in s['context_validity'].items():
                 if key!='baseline':out['context_validity'][key]=torch.as_tensor(value)
@@ -296,16 +335,119 @@ def collate_samples(samples):
     return {k:combine([s[k] for s in samples],k) for k in keys}
 
 
-def convert_pilot(mat_path,output_dir,grid_size=128):
+def convert_pilot(mat_path,output_dir,grid_size=128,selection_path=None):
     """Lossless calibrated real-data export with untouched sealed-test flag."""
     root=Path(output_dir);root.mkdir(parents=True,exist_ok=True);samples=[]
-    for split in ('train','validation','test'):
-        ds=PilotDataset(mat_path,split,allow_test=True,grid_size=grid_size)
+    splits=['train','validation']
+    if selection_path is not None:
+        selection=json.loads(Path(selection_path).read_text())
+        if selection.get('status')!='frozen' or not selection.get('selection_sha256'):
+            raise PermissionError('sealed test export requires frozen frequency-selection provenance')
+        splits.append('test')
+    for split in splits:
+        ds=PilotDataset(mat_path,split,allow_test=split=='test',grid_size=grid_size)
         for a in ds:
             cid=a['metadata']['case_id'];prefix=f'case_{cid}'
             # Export raw current + reference, so subtraction remains complex128.
             raw=ds.s[:,:,:,cid].transpose(2,0,1);ref=ds.s[:,:,:,0].transpose(2,0,1)
             np.save(root/f'{prefix}_signal.npy',raw);np.save(root/f'{prefix}_reference.npy',ref);np.save(root/f'{prefix}_target.npy',a['target'].numpy())
             md=a['metadata'];samples.append({'id':prefix,'split':split,'subject_id':prefix,'head_id':prefix,'geometry_id':prefix,'sequence_id':prefix,'source_domain':md['source_domain'],'domain':'calibrated_delta_s','mode':'snapshot','signal_path':f'{prefix}_signal.npy','reference_path':f'{prefix}_reference.npy','target_path':f'{prefix}_target.npy','grid':{'shape_zyx':list(a['target'].shape[1:]),'bounds_xyz_mm':md['bounds_xyz_mm'],'array_axes':'ZYX','coordinate_axes':'XYZ','units':'mm'},'frequencies_ghz':PILOT_FREQUENCIES.tolist(),'physical_ports':list(range(1,19)),'comsol_ports':PILOT_COMSOL_PORTS,'reference_frequency_ghz':.85,'target_kind':'sphere_object_only','sealed_test':split=='test','lesion_configuration':md['case']})
-    manifest={'schema_version':1,'source_mat':str(Path(mat_path).name),'samples':samples};validate_manifest(manifest)
+    manifest={'schema_version':1,'source_mat':str(Path(mat_path).resolve()),'sealed_test':{'case_id':3,'source_mat':str(Path(mat_path).resolve()),'status':'sealed' if selection_path is None else 'exported_after_frequency_selection'},'samples':samples};validate_manifest(manifest)
     p=root/'manifest.json';p.write_text(json.dumps(manifest,indent=2));return p
+
+
+class TrainingAugmentation(Dataset):
+    """Structured acquisition/corruption variants remain in their geometry split.
+
+    Does not move physical targets or derive focus from current supervision.
+    Parameters are explicit engineering noise models, not validated SDR models.
+    """
+    def __init__(self,dataset,config=None,seed=0):
+        self.dataset=dataset;self.config=dict(config or {});self.seed=int(seed);self.epoch=0
+        self.samples=getattr(dataset,'samples',None)
+    def __len__(self):return len(self.dataset)
+    def set_epoch(self,epoch):self.epoch=int(epoch)
+    def __getitem__(self,index):
+        from .acquisition import corrupt_measurements
+        sample=self.dataset[index]
+        if sample.get('metadata',{}).get('split')!='train':raise ValueError('augmentation requires training geometry')
+        out={k:(v.clone() if torch.is_tensor(v) else v) for k,v in sample.items()}
+        out['metadata']=dict(sample['metadata'])
+        rng=np.random.default_rng(self.seed+self.epoch*1000003+index)
+        m=out['mask'].clone().bool();f,r,t=m.shape[-3:]
+        for field,n,axis in (('tx_keep',t,-1),('rx_keep',r,-2)):
+            keep=int(self.config.get(field,n))
+            if keep<1 or keep>n:raise ValueError(f'invalid {field}')
+            chosen=rng.choice(n,size=keep,replace=False);sel=torch.zeros(n,dtype=torch.bool);sel[chosen]=True
+            view=[1]*m.ndim;view[axis]=n;m &= sel.reshape(view)
+        if self.config.get('frequency_indices') is not None:
+            inds=list(map(int,self.config['frequency_indices']))
+            if not inds or min(inds)<0 or max(inds)>=f:raise ValueError('augmentation frequency selection invalid')
+            sel=torch.zeros(f,dtype=torch.bool);sel[inds]=True;m &=sel.reshape(1,f,1,1)
+        p=float(self.config.get('failed_probability',0))
+        if not 0<=p<1:raise ValueError('invalid channel failure probability')
+        if p:m &=torch.from_numpy(rng.random(m.shape)>=p)
+        original=out['signals']
+        out['signals']=torch.where(m,original,torch.zeros_like(original));out['mask']=m
+        if 'difference' in out:
+            out['difference_mask']=out['difference_mask'].bool()&m
+            out['difference']=torch.where(out['difference_mask'],out['difference'],torch.zeros_like(out['difference']))
+        for key in ('clean_signals','repeated_signals','raw_signals','reference'):
+            if key in out:out[key]=torch.where(m,out[key],torch.zeros_like(out[key]))
+        corruption=self.config.get('corruption')
+        if corruption:
+            pre=getattr(self.dataset,'preprocessing',None)
+            physical=pre.inverse(out['signals']) if pre else out['signals']
+            result=corrupt_measurements(channels_to_complex(physical),m[0].numpy(),seed=int(rng.integers(2**31)),**corruption)
+            out['signals']=complex_to_channels(result['signal'],m[0].numpy())
+            if pre:out['signals']=pre.transform(out['signals'],m)
+            out['metadata']['corruption']={k:v for k,v in result.items() if k not in ('signal','mask')}
+        # Shift an existing prior ROI without wrapping at array edges.
+        if 'roi' in out and self.config.get('focus_shift_mm'):
+            grid=out['metadata'].get('grid',{})
+            if not grid:raise ValueError('physical grid is required for ROI displacement')
+            b=np.asarray(grid['bounds_xyz_mm'],float);shape=np.asarray(grid['shape_zyx'])
+            spacing=(b[:,1]-b[:,0])/shape[::-1]
+            delta=rng.uniform(-float(self.config['focus_shift_mm']),float(self.config['focus_shift_mm']),3)
+            shifts=np.rint(delta/spacing).astype(int)[::-1]
+            roi=out['roi'];shifted=torch.zeros_like(roi)
+            source=[];dest=[]
+            for n,step in zip(roi.shape[-3:],shifts):
+                if abs(step)>=n:source=[];break
+                source.append(slice(max(0,-step),min(n,n-step)));dest.append(slice(max(0,step),min(n,n+step)))
+            if source:shifted[(...,*dest)]=roi[(...,*source)]
+            out['roi']=shifted;out['metadata']['prior_roi_displacement_xyz_mm']=delta.tolist()
+        if 'roi' in out and self.config.get('focus_radius_scale'):
+            lo,hi=map(float,self.config['focus_radius_scale'])
+            if lo<=0 or hi<lo:raise ValueError('invalid focus radius scale')
+            scale=float(rng.uniform(lo,hi));coords=torch.nonzero(out['roi'][0].bool())
+            if len(coords):
+                centre=coords.float().mean(0);grid=torch.stack(torch.meshgrid(*[torch.arange(n) for n in out['roi'].shape[-3:]],indexing='ij'),-1).float()
+                # Nearest-neighbour resampling of prior ROI only, not property targets.
+                source=torch.round((grid-centre)/scale+centre).long();valid=torch.ones(source.shape[:-1],dtype=torch.bool)
+                for ax,n in enumerate(out['roi'].shape[-3:]):valid &= (source[...,ax]>=0)&(source[...,ax]<n);source[...,ax].clamp_(0,n-1)
+                out['roi']=torch.where(valid,out['roi'][0][source[...,0],source[...,1],source[...,2]],0)[None]
+            out['metadata']['prior_roi_radius_scale']=scale
+        out['metadata']['augmentation_epoch']=self.epoch
+        out['metadata']['augmentation_geometry_id']=out['metadata'].get('geometry_id')
+        return out
+
+
+def repeated_acquisition_target(sample):
+    """Noise2Noise is eligible only under explicitly verified assumptions.
+
+    Shared drift, same frame copies and unverified zero-mean noise are refused.
+    This returns a target adapter; downstream losses must still remask support.
+    """
+    md=sample.get('metadata',{});a=md.get('repeat_assumptions',{})
+    required=('same_clean_state','conditionally_unbiased_target','independent_given_clean_state')
+    if not all(a.get(k,False) for k in required) or a.get('shared_drift',False):
+        raise ValueError('repeated acquisition lacks verified Noise2Noise assumptions')
+    if 'repeated_signals' not in sample:raise ValueError('no independent repeated acquisition')
+    if md.get('acquisition_id')==md.get('repeated_acquisition_id') or not md.get('repeated_acquisition_id'):
+        raise ValueError('distinct repeated acquisition identifiers required')
+    mask=sample['mask'].bool()
+    if 'repeated_mask' in sample:mask=mask&sample['repeated_mask'].bool()
+    target=torch.where(mask,sample['repeated_signals'],torch.zeros_like(sample['repeated_signals']))
+    if not torch.isfinite(target).all():raise ValueError('nonfinite observed repeat target')
+    return target,mask

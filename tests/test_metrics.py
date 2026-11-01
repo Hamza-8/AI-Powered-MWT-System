@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from microscan.metrics import property_metrics, lesion_components, component_changes
+from microscan.evaluation import segmentation_metrics
 
 
 def test_balanced_metrics_penalize_small_foreground():
@@ -20,3 +21,10 @@ def test_components_xyz_units_and_signed_shrinkage():
     assert c['volume_mm3'] == 24.
     assert component_changes({'components': []}, report, True)['class_volume_change_ml']['0'] == -.024
     assert not component_changes(report, report, False)['valid']
+
+
+def test_missing_label_metrics_are_unassessed_not_perfect_background():
+    p = torch.ones(1, 5, 2, 2, 2)/5
+    y = torch.zeros(1, 2, 2, 2, dtype=torch.long)
+    rows = segmentation_metrics(p, y, torch.zeros_like(y, dtype=torch.bool), 'multiclass')
+    assert all(row['dice'] is None and row['valid_voxels'] == 0 for row in rows.values())

@@ -99,6 +99,17 @@ class FrequencyProtocolTests(unittest.TestCase):
         cfg=self.config();cfg["model"]={"correction_depth":0}
         with self.assertRaises(ValueError):f.validate_config(cfg)
 
+    def test_numerical_execution_is_part_of_identity(self):
+        cpu=f.execution_identity("cpu",True)
+        self.assertFalse(cpu["amp_active"])
+        self.assertEqual(cpu["device_type"],"cpu")
+        with tempfile.TemporaryDirectory() as tmp:
+            data=Path(tmp)/"data.mat";data.write_bytes(b"A")
+            a=f.run_identity(self.config(),data,CSV,3,17,{"scale":1.},cpu)
+            changed=dict(cpu,torch_version="different")
+            b=f.run_identity(self.config(),data,CSV,3,17,{"scale":1.},changed)
+            self.assertNotEqual(f.canonical_hash(a),f.canonical_hash(b))
+
     def test_data_and_preprocessing_in_identity(self):
         with tempfile.TemporaryDirectory() as tmp:
             p=Path(tmp)/"data.mat";p.write_bytes(b"A")
@@ -129,10 +140,48 @@ class FrequencyProtocolTests(unittest.TestCase):
             f.atomic_json(Path(tmp)/"frozen_frequencies.json",{"status":"pending_selection"})
             with self.assertRaises(ValueError):f.evaluate_sealed_test(self.config(),MAT,CSV,tmp)
 
+    def test_equal_frequency_training_budgets_required(self):
+        cfg=self.config();cfg.update(epochs=3,patience=1)
+        with self.assertRaises(ValueError):f.validate_config(cfg)
+
+    def test_failed_test_read_still_locks_selection(self):
+        # Mechanism fixture: validates artifact plumbing without scientific training
+        # or accessing the actual sealed geometry.
+        sample={"signals":torch.ones(2,10,2,2),"mask":torch.ones(1,10,2,2,dtype=torch.bool)}
+        cfg=self.config();pre=f.fit_input_scale([sample])
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(f,"source_identity",return_value=f.source_identity()):
+            root=Path(tmp);all_results=[]
+            for k in range(3,11):
+                for seed in cfg["seeds"]:
+                    identity=f.run_identity(cfg,MAT,CSV,k,seed,pre)
+                    runroot=root/f"K{k:02d}"/f"seed_{seed}"
+                    saved={"model":{},"preprocessing":pre,"identity":identity,"identity_sha256":f.canonical_hash(identity)}
+                    f.atomic_checkpoint(runroot/"best.pt",saved)
+                    result={"k":k,"seed":seed,"identity_sha256":saved["identity_sha256"],
+                            "best_checkpoint_sha256":f.file_sha256(runroot/"best.pt")}
+                    f.atomic_json(runroot/"result.json",result);all_results.append(result)
+            report={"status":"selected","selected_k":3,"results_sha256":f.canonical_hash(all_results)}
+            f.atomic_json(root/"selection.json",report)
+            indices=f.read_subsets(CSV)[3]
+            frozen={"status":"frozen","selected_k":3,"selection_sha256":f.canonical_hash(report),
+                "data_sha256":f.file_sha256(MAT),"csv_sha256":f.file_sha256(CSV),
+                "indices_zero_based":indices,"grid_ghz":f.GRID_GHZ,"frequencies_ghz":[f.GRID_GHZ[i] for i in indices]}
+            f.atomic_json(root/"frozen_frequencies.json",frozen)
+            def loader(mat,split,*args,**kwargs):
+                if split=="test":raise RuntimeError("interrupted while opening test")
+                return [sample]
+            with mock.patch.object(f,"_dataset",side_effect=loader):
+                with self.assertRaisesRegex(RuntimeError,"interrupted"):
+                    f.evaluate_sealed_test(cfg,MAT,CSV,tmp)
+            self.assertTrue((root/"sealed_test_access.json").exists())
+            with self.assertRaises(PermissionError):f.select_and_freeze(cfg,MAT,CSV,tmp)
+
     def test_bounded_real_candidate_resume_preserves_rng_and_rejects_identity_change(self):
         from microscan.models import tiny_config
         cfg=self.config();cfg.update(model=tiny_config(),grid_size=16,seeds=[17],epochs=2,amp=False)
-        with tempfile.TemporaryDirectory() as tmp:
+        # Other agents may edit unrelated package files during this bounded test;
+        # freeze the source snapshot within this single in-process mechanism run.
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(f,"source_identity",return_value=f.source_identity()):
             first=f.run_candidate(cfg,MAT,CSV,tmp,3,17,max_updates=1)
             self.assertEqual(first["status"],"running")
             resumed=f.run_candidate(cfg,MAT,CSV,tmp,3,17,max_updates=1,resume=True)
@@ -141,6 +190,11 @@ class FrequencyProtocolTests(unittest.TestCase):
             self.assertIn("scaler",checkpoint)
             self.assertIn("numpy",checkpoint["rng"])
             self.assertEqual(checkpoint["inference_requirements"]["phi"],False)
+            with tempfile.TemporaryDirectory() as direct:
+                f.run_candidate(cfg,MAT,CSV,direct,3,17,max_updates=2)
+                uninterrupted=torch.load(Path(direct)/"K03/seed_17/resume.pt",weights_only=False)
+                for name,value in checkpoint["model"].items():
+                    self.assertTrue(torch.equal(value,uninterrupted["model"][name]),name)
             cfg["learning_rate"]=.1
             with self.assertRaises(ValueError):f.run_candidate(cfg,MAT,CSV,tmp,3,17,resume=True,max_updates=1)
 

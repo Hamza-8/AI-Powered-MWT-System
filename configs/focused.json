@@ -1,0 +1,10 @@
+{
+  "mode": "focused",
+  "physics_mode": "A",
+  "use_cyclegan": false,
+  "use_subspace": false,
+  "frequency_config_path": "configs/selected_frequencies.json",
+  "roi_source": "clinician_or_previous_prediction",
+  "geometric_selection_is_heuristic": true,
+  "global_refresh_interval": 10
+}

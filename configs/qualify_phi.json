@@ -1,0 +1,12 @@
+{
+  "scientific": true,
+  "thresholds": {
+    "full_relative_rmse": 0.05,
+    "differential_relative_rmse": 0.1,
+    "noise_relative_rmse": 1.0,
+    "worst_channel_relative_rmse": 0.2,
+    "roi_relative_rmse": 0.1
+  },
+  "property_bounds": null,
+  "note": "Set property_bounds to independently validated training/held-out domain bounds; absent bounds deliberately fails scientific qualification."
+}

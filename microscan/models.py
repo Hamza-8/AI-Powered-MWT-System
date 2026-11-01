@@ -223,11 +223,14 @@ class MSRNN(nn.Module):
         self.register_buffer("property_scale",torch.tensor(c.get("property_scales",[44.,.8])).reshape(1,2,1,1,1))
         self.register_buffer("property_offset",torch.tensor(c.get("property_offsets",[1.,0.])).reshape(1,2,1,1,1))
     def spectral_properties(self, outputs, query_ghz):
-        q = torch.as_tensor(query_ghz,device=outputs["refined"].device,dtype=outputs["refined"].dtype).flatten()
-        delta = q-self.reference_frequency_ghz
+        q = torch.as_tensor(query_ghz,device=outputs["refined"].device,dtype=outputs["refined"].dtype)
+        if q.ndim==1: q=q[None].expand(outputs["refined"].shape[0],-1)
+        if q.ndim!=2 or q.shape[0]!=outputs["refined"].shape[0] or not torch.isfinite(q).all():
+            raise ValueError("Spectral queries must be finite [Q] or [B,Q]")
+        delta = (q-self.reference_frequency_ghz)[:,None,:,None,None,None]
         coefficients = self.spectral(outputs["features"])
         slope, curve = coefficients.chunk(2,1)
-        return outputs["refined"][:,:,None] + (slope[:,:,None]*delta[None,None,:,None,None,None] + curve[:,:,None]*delta.square()[None,None,:,None,None,None])*self.property_scale[:,:,None]
+        return outputs["refined"][:,:,None] + (slope[:,:,None]*delta + curve[:,:,None]*delta.square())*self.property_scale[:,:,None]
     def forward(self, measurements, mask, frequencies_ghz=None, baseline=None, roi=None,
                 context_validity=None, mode="snapshot",physics_mode="A",phi=None,physics_context=None,physics_observations=None):
         if physics_mode not in ("A","B","C"):
@@ -235,6 +238,9 @@ class MSRNN(nn.Module):
         if mode not in ("snapshot","monitoring","full_scan","focused","baseline_tracking"):
             raise ValueError("Unknown acquisition mode")
         monitoring = mode in ("monitoring","baseline_tracking")
+        if monitoring and context_validity is not None and "measurement_registration" in context_validity:
+            registered=torch.as_tensor(context_validity["measurement_registration"],device=mask.device).bool().expand(measurements.shape[0])
+            mask=mask.bool() & registered[:,None,None,None,None]
         if measurements.shape[2] != self.frequency_grid.numel():
             raise ValueError("Use the fixed frequency-slot representation; missing frequencies require masks")
         frequencies = self.frequency_grid if frequencies_ghz is None else frequencies_ghz
@@ -249,8 +255,14 @@ class MSRNN(nn.Module):
         if physics_mode == "C":
             if phi is None:
                 raise ValueError("Experimental C feedback requires an explicitly compatible qualified Phi")
-            from .physics import require_qualified_operator
-            require_qualified_operator(phi,context=physics_context,domain=(physics_context or {}).get("observation_domain"))
+            from .physics import require_qualified_operator,freeze_operator
+            report=require_qualified_operator(phi,context=physics_context,domain=phi.domain,allow_fixture=bool((physics_context or {}).get("mechanism_fixture",False)))
+            if any(not any(abs(float(value)-float(allowed))<1e-5 for allowed in report["frequencies_ghz"]) for value in torch.as_tensor(frequencies).flatten()):
+                raise ValueError("C queried outside qualified frequency support")
+            expected_domain="current_minus_baseline" if monitoring else phi.domain
+            if (physics_context or {}).get("observation_domain")!=expected_domain:
+                raise ValueError("C requires matching original calibrated observation domain")
+            freeze_operator(phi)
             if physics_observations is None:
                 raise ValueError("C requires original calibrated physics_observations and an explicit observation domain")
             if not (physics_context or {}).get("observation_domain"):
@@ -260,6 +272,12 @@ class MSRNN(nn.Module):
             if physics_mode == "C":
                 state = {"refined":refined,"features":latent_features}
                 spectral = self.spectral_properties(state,frequencies)
+                bounds=report.get("property_bounds")
+                if bounds is not None:
+                    checked=spectral if not monitoring else spectral+(physics_context or {}).get("baseline_spectral",torch.zeros_like(spectral))
+                    for channel,(lo,hi) in enumerate(bounds):
+                        if (checked[:,channel].detach()<lo).any() or (checked[:,channel].detach()>hi).any():
+                            raise ValueError("C inverse state outside qualified physical property domain")
                 if monitoring:
                     if baseline is None or baseline_valid is None or not baseline_valid.bool().all():
                         raise ValueError("C monitoring requires explicitly valid registered baseline context")
@@ -290,7 +308,7 @@ class MSRNN(nn.Module):
             change = refined-baseline if baseline is not None else None
         return dict(coarse=coarse,refined=refined,absolute=absolute,change=change,absolute_valid=absolute_valid,
                     measurement_valid=valid,features=latent_features,physics_requested=physics_mode,
-                    physics_active="C" if physics_mode=="C" else "A",correction_depth=self.correction_depth,
+                    physics_active="C" if physics_mode=="C" else "A",physics_mechanism_fixture=bool(physics_mode=="C" and (physics_context or {}).get("mechanism_fixture",False)),correction_depth=self.correction_depth,
                     observation_mask=mask,roi=roi,monitoring=monitoring)
 
 

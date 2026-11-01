@@ -8,7 +8,7 @@ from .models import MSRNN, SegmentationUNet, sanitize_measurements
 class MicroScanPipeline(nn.Module):
     def __init__(self,reconstruction=None,segmentation=None,declutterer=None,*,
                  trained_declutterer=False,subspace=None,physics_mode="A",phi=None,
-                 physics_context=None,global_refresh_interval=10,trained_routing=None,subspace_context=None):
+                 physics_context=None,global_refresh_interval=10,trained_routing=None,subspace_context=None,signal_scale=1.):
         super().__init__()
         self.reconstruction=reconstruction if reconstruction is not None else MSRNN()
         self.segmentation=segmentation
@@ -16,6 +16,7 @@ class MicroScanPipeline(nn.Module):
         self.trained_declutterer=trained_declutterer
         self.subspace=subspace
         self.subspace_context=subspace_context
+        self.signal_scale=signal_scale
         self.physics_mode,self.phi=physics_mode,phi if physics_mode=="C" else None
         self.physics_context=physics_context
         self.global_refresh_interval=global_refresh_interval
@@ -28,7 +29,7 @@ class MicroScanPipeline(nn.Module):
             measurements=batch.get("measurements",batch.get("signals"))
             mask=batch["mask"]
             frequencies_ghz=batch.get("frequencies_ghz",frequencies_ghz)
-            baseline=batch.get("baseline_volume",baseline)
+            baseline=batch.get("baseline_volume",batch.get("baseline",baseline))
             roi=batch.get("roi",roi)
             context_validity=batch.get("context_validity",context_validity)
             mode=batch.get("mode",mode)
@@ -70,7 +71,8 @@ class MicroScanPipeline(nn.Module):
             routing["declutterer"]="active"
         outputs=self.reconstruction(processed,mask,frequencies_ghz,baseline,roi,context_validity,mode,
                                     self.physics_mode,self.phi,self.physics_context,physics_observations=calibrated if physics_observations is None else physics_observations)
-        outputs.update(calibrated=calibrated,decluttered=processed,routing=routing,
+        physical_calibrated=calibrated*torch.as_tensor(self.signal_scale,device=calibrated.device,dtype=calibrated.dtype) if physics_observations is None else sanitize_measurements(physics_observations,mask)
+        outputs.update(calibrated=physical_calibrated,network_calibrated=calibrated,decluttered=processed*torch.as_tensor(self.signal_scale,device=processed.device,dtype=processed.dtype),routing=routing,
                        segmentation_logits=None,segmentation_probabilities=None)
         if self.segmentation is not None and run_segmentation:
             # Invalid absolute states must not become confident clinical labels.
@@ -114,3 +116,36 @@ def connected_components(probabilities,grid_xyz_mm,threshold=.5,label_mode="mult
             zz,yy,xx=np.where(labels==i)
             components.append(dict(class_id=int(cls),voxel_count=len(xx),center_xyz_mm=[float(x[xx].mean()),float(y[yy].mean()),float(z[zz].mean())],volume_mm3=len(xx)*voxel_volume,volume_ml=len(xx)*voxel_volume/1000,mean_probability=float(values[cls,zz,yy,xx].mean())))
     return components
+
+
+def component_changes(current,baseline,max_match_distance_mm=30.,roi_valid=True):
+    """Greedy class-matched prior/current descriptors; signed growth and shrinkage.
+
+    Match validity is explicit: an unmatched component is not silently declared
+    resolved outside an assessed ROI. For clinical tracking a verified temporal
+    registration and independently validated matcher remain prerequisites.
+    """
+    import math
+    remaining=set(range(len(baseline)))
+    changes=[]
+    for component in current:
+        choices=[]
+        for index in remaining:
+            prior=baseline[index]
+            if prior['class_id']!=component['class_id']:continue
+            distance=math.dist(component['center_xyz_mm'],prior['center_xyz_mm'])
+            if distance<=max_match_distance_mm:choices.append((distance,index))
+        if choices:
+            distance,index=min(choices);remaining.remove(index);prior=baseline[index]
+            changes.append(dict(current=component,baseline=prior,status='matched',
+                volume_change_mm3=component['volume_mm3']-prior['volume_mm3'],
+                displacement_xyz_mm=[a-b for a,b in zip(component['center_xyz_mm'],prior['center_xyz_mm'])],
+                tracking_valid=bool(roi_valid)))
+        else:
+            changes.append(dict(current=component,baseline=None,status='new_or_unmatched',
+                                volume_change_mm3=None,tracking_valid=False))
+    for index in sorted(remaining):
+        changes.append(dict(current=None,baseline=baseline[index],status='absent_in_assessed_roi' if roi_valid else 'unassessed',
+                            volume_change_mm3=-baseline[index]['volume_mm3'] if roi_valid else None,
+                            tracking_valid=bool(roi_valid)))
+    return changes

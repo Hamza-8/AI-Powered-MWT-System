@@ -1,0 +1,8 @@
+{
+  "mode": "full_scan",
+  "physics_mode": "A",
+  "use_cyclegan": false,
+  "use_subspace": false,
+  "frequency_config_path": "configs/selected_frequencies.json",
+  "global_refresh_interval": 1
+}

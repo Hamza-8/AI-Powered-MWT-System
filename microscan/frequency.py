@@ -94,6 +94,8 @@ def validate_config(config):
         raise ValueError("Target grid must match native learned decoder size")
     if not config.get("seeds") or len(set(config["seeds"])) != len(config["seeds"]):
         raise ValueError("Use distinct paired seeds")
+    if int(config.get("patience", config.get("epochs", 0))) < int(config.get("epochs", 0)):
+        raise ValueError("Frequency candidates use equal full epoch budgets; patience must be at least epochs")
     if int(config.get("epochs", 0)) < 1 or int(config.get("batch_size", 1)) != 1:
         raise ValueError("Positive training budget and batch size one required for this pilot")
     if config.get("frequency_config", {}).get("status", "pending_selection") != "pending_selection":
@@ -106,7 +108,16 @@ def source_identity():
     return {p.name: file_sha256(p) for p in sorted(root.glob("*.py"))}
 
 
-def run_identity(config, mat, csv_path, k, seed, preprocessing):
+def execution_identity(device, amp_requested):
+    target = torch.device(device)
+    cuda = target.type == "cuda"
+    return {"torch_version": torch.__version__, "numpy_version": np.__version__,
+            "device_type": target.type, "amp_active": bool(amp_requested and cuda),
+            "cuda_version": torch.version.cuda if cuda else None,
+            "cuda_capability": list(torch.cuda.get_device_capability(target)) if cuda and torch.cuda.is_available() else None}
+
+
+def run_identity(config, mat, csv_path, k, seed, preprocessing, execution=None):
     return {
         "protocol_version": PROTOCOL_VERSION, "config": copy.deepcopy(config),
         "data_sha256": file_sha256(mat), "csv_sha256": file_sha256(csv_path),
@@ -114,7 +125,7 @@ def run_identity(config, mat, csv_path, k, seed, preprocessing):
         "indices_zero_based": read_subsets(csv_path)[int(k)], "splits": SPLITS,
         "preprocessing": preprocessing, "physics_requested": "A", "physics_active": "none",
         "cyclegan": "bypass", "segmentation": "excluded", "fixed_slots": 10,
-        "property_reference_ghz": .85,
+        "property_reference_ghz": .85, "execution": execution,
     }
 
 
@@ -302,18 +313,27 @@ def run_candidate(config, mat, csv_path, output, k, seed, *, device="cpu", resum
     training = list(_dataset(mat, "train", indices, config))
     validation = list(_dataset(mat, "validation", indices, config))
     preprocessing = fit_input_scale(training)
-    identity = run_identity(config, mat, csv_path, k, seed, preprocessing)
+    identity = run_identity(config, mat, csv_path, k, seed, preprocessing,
+                            execution=execution_identity(device, config.get("amp", True)))
     identity_hash = canonical_hash(identity)
     root = Path(output) / f"K{k:02d}" / f"seed_{seed}"
     root.mkdir(parents=True, exist_ok=True)
     result_path, checkpoint_path = root / "result.json", root / "resume.pt"
     if result_path.exists():
         completed = json.loads(result_path.read_text())
-        if completed.get("identity_sha256") != identity_hash:
+        if (completed.get("identity_sha256") != identity_hash
+                or canonical_hash(completed.get("identity")) != identity_hash
+                or completed.get("status") != "completed" or completed.get("test_accessed")
+                or completed.get("physics_requested") != "A" or completed.get("physics_active") != "none"):
             raise ValueError("Completed work identity differs; use a separate output directory")
+        best_path = root / "best.pt"
+        if not best_path.exists() or file_sha256(best_path) != completed.get("best_checkpoint_sha256"):
+            raise ValueError("Completed checkpoint is missing or its bytes changed")
         if not resume:
             raise FileExistsError("Completed candidate exists; use --resume to reuse matching completed work")
         return completed
+    if any((Path(output) / name).exists() for name in ("sealed_test_results.json", "sealed_test_access.json")):
+        raise PermissionError("Test has been opened; new candidate training is locked in this output directory")
     seed_everything(seed)
     model = _model(config).to(device)
     parameter_count = sum(p.numel() for p in model.parameters())
@@ -401,6 +421,7 @@ def run_candidate(config, mat, csv_path, output, k, seed, *, device="cpu", resum
     atomic_checkpoint(root / "best.pt", {"schema_version": 1, "model": state["best_model"], "identity": identity,
                       "identity_sha256": identity_hash, "preprocessing": preprocessing,
                       "architecture": config.get("model", {}), "physics_requested": "A", "physics_active": "none"})
+    result["best_checkpoint_sha256"] = file_sha256(root / "best.pt")
     atomic_json(result_path, result)
     return result
 
@@ -473,7 +494,7 @@ def select_results(results, config):
 
 
 def select_and_freeze(config, mat, csv_path, output):
-    if (Path(output) / "sealed_test_results.json").exists():
+    if any((Path(output) / name).exists() for name in ("sealed_test_results.json", "sealed_test_access.json")):
         raise PermissionError("Test has been opened; frequency selection is immutable in this output directory")
     results = []
     for k in range(3, 11):
@@ -481,9 +502,13 @@ def select_and_freeze(config, mat, csv_path, output):
             path = Path(output) / f"K{k:02d}" / f"seed_{seed}" / "result.json"
             result = json.loads(path.read_text())
             train = list(_dataset(mat, "train", read_subsets(csv_path)[k], config))
-            expected = run_identity(config, mat, csv_path, k, seed, fit_input_scale(train))
+            expected = run_identity(config, mat, csv_path, k, seed, fit_input_scale(train),
+                                    execution=result["identity"].get("execution"))
             if result["identity_sha256"] != canonical_hash(expected):
                 raise ValueError(f"Stale or incompatible result: {path}")
+            best_path = path.parent / "best.pt"
+            if not best_path.exists() or file_sha256(best_path) != result.get("best_checkpoint_sha256"):
+                raise ValueError(f"Missing or modified best checkpoint: {best_path}")
             results.append(result)
     report = select_results(results, config)
     report["results_sha256"] = canonical_hash(results)
@@ -500,7 +525,12 @@ def select_and_freeze(config, mat, csv_path, output):
 
 
 def evaluate_sealed_test(config, mat, csv_path, output, *, device="cpu"):
-    """Explicit post-selection access; never retune selection after seeing this result."""
+    """Explicit post-selection access; preflight every artifact before opening test.
+
+    The access marker is durable before materializing test labels, so an interrupted
+    evaluation cannot accidentally unlock selection or further candidate training.
+    """
+    validate_config(config)
     root = Path(output)
     report = json.loads((root / "selection.json").read_text())
     frozen = json.loads((root / "frozen_frequencies.json").read_text())
@@ -508,14 +538,45 @@ def evaluate_sealed_test(config, mat, csv_path, output, *, device="cpu"):
         raise ValueError("Sealed test requires a successful explicit matching selection")
     k = int(frozen["selected_k"])
     indices = read_subsets(csv_path)[k]
+    if (report.get("selected_k") != k or frozen.get("status") != "frozen"
+            or frozen.get("data_sha256") != file_sha256(mat)
+            or frozen.get("csv_sha256") != file_sha256(csv_path)
+            or frozen.get("indices_zero_based") != indices
+            or frozen.get("grid_ghz") != GRID_GHZ
+            or frozen.get("frequencies_ghz") != [GRID_GHZ[i] for i in indices]):
+        raise ValueError("Frozen selection/data/frequency binding mismatch")
+    training = list(_dataset(mat, "train", indices, config))
+    preprocessing = fit_input_scale(training)
+    # Confirm every run that participated in selection remains intact. No test
+    # loader call is made while validating sources, preprocessing or checkpoints.
+    all_results = []
+    selected_states = []
+    for candidate_k in range(3, 11):
+        for seed in config["seeds"]:
+            candidate_root = root / f"K{candidate_k:02d}" / f"seed_{seed}"
+            result = json.loads((candidate_root / "result.json").read_text())
+            all_results.append(result)
+            if candidate_k != k:
+                continue
+            best_path = candidate_root / "best.pt"
+            if file_sha256(best_path) != result.get("best_checkpoint_sha256"):
+                raise ValueError("Sealed-test best-checkpoint bytes changed")
+            saved = torch.load(best_path, map_location=device, weights_only=False)
+            expected = run_identity(config, mat, csv_path, k, seed, preprocessing,
+                                    execution=saved["identity"].get("execution"))
+            if (saved["identity_sha256"] != canonical_hash(expected)
+                    or canonical_hash(saved.get("identity")) != saved["identity_sha256"]
+                    or saved.get("preprocessing") != preprocessing
+                    or result.get("identity_sha256") != saved["identity_sha256"]):
+                raise ValueError("Sealed-test checkpoint identity mismatch")
+            selected_states.append((seed, saved))
+    if canonical_hash(all_results) != report.get("results_sha256"):
+        raise ValueError("Validation results changed since explicit selection")
+    atomic_json(root / "sealed_test_access.json", {"selected_k": k, "test_access_requested": True,
+                "selection_sha256": canonical_hash(report), "selection_locked": True})
     samples = list(_dataset(mat, "test", indices, config, allow_test=True))
     rows = []
-    for seed in config["seeds"]:
-        saved = torch.load(root / f"K{k:02d}" / f"seed_{seed}" / "best.pt", map_location=device, weights_only=False)
-        train = list(_dataset(mat, "train", indices, config))
-        expected = run_identity(config, mat, csv_path, k, seed, fit_input_scale(train))
-        if saved["identity_sha256"] != canonical_hash(expected):
-            raise ValueError("Sealed-test checkpoint identity mismatch")
+    for seed, saved in selected_states:
         model = _model(config).to(device)
         model.load_state_dict(saved["model"])
         rows.append({"seed": seed, "metrics": _evaluate(model, samples, saved["preprocessing"], device)})
