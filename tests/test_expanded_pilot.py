@@ -17,6 +17,7 @@ runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
 MAT = ROOT/"data/pilot_expanded/frequency_pilot.mat"
 CSV = ROOT/"data/pilot/frequency_subsets.csv"
+pytestmark = pytest.mark.skipif(not MAT.exists(), reason="Expanded MAT is user-provided local data; copy it to data/pilot_expanded before running these integration checks")
 
 
 def config():
