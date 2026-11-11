@@ -1,0 +1,57 @@
+{
+  "scope": "Expanded pilot preparation and bounded implementation verification; no full CUDA training launched here",
+  "tests": {
+    "command": "python -m pytest -q",
+    "passed": 94,
+    "warnings": 0,
+    "seconds": 9.11
+  },
+  "expanded_dataset": {
+    "shape": [
+      18,
+      18,
+      10,
+      9
+    ],
+    "dtype": "complex128",
+    "frequencies": 10,
+    "all_frequency_case_jobs_complete": true,
+    "original_five_measurement_blocks_bitwise_equal": true,
+    "data_sha256": "c80358a1271f7389c835a85fcc8361e24dbd9347d74df69523b83c82db3c1774"
+  },
+  "splits": {
+    "reference": [
+      0
+    ],
+    "train": [
+      1,
+      2,
+      4,
+      5,
+      6
+    ],
+    "validation": [
+      7,
+      8
+    ],
+    "sealed_test": [
+      3
+    ]
+  },
+  "counts": {
+    "training": 5,
+    "validation": 2,
+    "sealed_test": 1
+  },
+  "test_accessed": false,
+  "bounded_verification": {
+    "native_grid": 16,
+    "optimizer_resume_verified": true,
+    "resumed_weights_bitwise_match_uninterrupted": true,
+    "untrained_metrics_precede_first_update": true,
+    "training_fit_and_per_case_validation_histories_verified": true,
+    "legacy_package_sources_unchanged": true
+  },
+  "full_training_status": "Ready for user RTX5070Ti; this execution environment has CPU-only torch2.5.1",
+  "frequency_config_status": "pending_selection"
+}

@@ -8,3 +8,6 @@ runs/
 outputs/
 *.pt
 *.pth
+
+# User-provided expanded simulation data stays local.
+data/pilot_expanded/*.mat
