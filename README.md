@@ -79,6 +79,10 @@ The current controlled sphere experiment is documented in the
 sources, the unchanged weighted training loss, final-epoch checkpoint policy and
 Windows launch commands. Start with K10 seed17 before a frequency-count campaign.
 
+The subsequent [controlled amplitude-routing test](docs/POSTNORM_AMPLITUDE_PILOT.md)
+ablates the saved model and tests post-normalization conditioning at K10 seed17
+with an unchanged loss, split and budget. Its training benefit remains unproven.
+
 In this implementation MSRNN is a feed-forward coarse inverse plus a separate full-3D
 residual enhancement U-Net; it has no recurrent unit. The reference-frequency maps
 and supervised spectral readout do not infer unlabelled Cole–Cole coefficients.
