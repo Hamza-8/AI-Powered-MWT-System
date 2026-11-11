@@ -82,9 +82,13 @@ class ExpandedPilot:
 def validate_allocation(config):
     f.validate_config(config)
     protocol = config.get("expanded_protocol", {})
-    required = {"reference":[0], "train":[1,2,4,5,6], "validation":[7,8], "sealed_test":[3]}
-    if config.get("protocol_version") != 2 or protocol.get("splits") != required:
-        raise ValueError("Use the explicitly frozen v2 allocation; original case3 cannot enter training")
+    allocations = {
+        2: {"reference":[0], "train":[1,2,4,5,6], "validation":[7,8], "sealed_test":[3]},
+        3: {"reference":[0], "train":[1,2,4,6,7], "validation":[5,8], "sealed_test":[3]},
+    }
+    version = config.get("protocol_version")
+    if version not in allocations or protocol.get("splits") != allocations[version]:
+        raise ValueError("Use the explicitly frozen v2/v3 allocation; original case3 cannot enter training")
     if len(protocol.get("cases", [])) != 9:
         raise ValueError("All nine reference/object metadata records are required")
     return config
@@ -174,7 +178,7 @@ class Experiment:
                 model.train()
             return model
         f.SPLITS = copy.deepcopy(self.config["expanded_protocol"]["splits"])
-        f.PROTOCOL_VERSION = 2
+        f.PROTOCOL_VERSION = self.config["protocol_version"]
         f._dataset, f._evaluate, f._model = self.dataset, self.evaluate, make_model
         os.replace = reliable_replace
         try:
@@ -187,7 +191,7 @@ class Experiment:
     def prepare(self):
         train = self.dataset(self.mat,"train",range(10),self.config)
         validation = self.dataset(self.mat,"validation",range(10),self.config)
-        report = {"status":"pending_selection","protocol_version":2,"config":self.config,
+        report = {"status":"pending_selection","protocol_version":self.config["protocol_version"],"config":self.config,
                   "splits":self.config["expanded_protocol"]["splits"],
                   "case_inventory":self.config["expanded_protocol"]["cases"],
                   "counts":{"training":len(train),"validation":len(validation),"sealed_test":1},
@@ -224,10 +228,10 @@ class Experiment:
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("command",choices=("prepare","run","select","test"))
-    p.add_argument("--config",default="configs/frequency_pilot_expanded.json")
+    p.add_argument("--config",default="configs/frequency_pilot_crossed_v3.json")
     p.add_argument("--mat",default="data/pilot_expanded/frequency_pilot.mat")
     p.add_argument("--csv",default="data/pilot/frequency_subsets.csv")
-    p.add_argument("--output",default="outputs/frequency_expanded_v2")
+    p.add_argument("--output",default="outputs/frequency_crossed_v3")
     p.add_argument("--counts",default="10",help="Start with the ten-frequency comparator; explicitly request all K later")
     p.add_argument("--device",default="cpu")
     p.add_argument("--resume",action="store_true")

@@ -1,5 +1,8 @@
 # Expanded sphere pilot v2
 
+**Superseded before full training:** use [the agreed v3 cross-combination split](CROSSED_SPHERE_PILOT_V3.md).
+This page preserves the earlier whole-position-holdout proposal as provenance.
+
 The new supplied MAT contains complex128 `[18,18,10,9]`: eight sphere geometries
 and the empty reference. Its original five S-parameter blocks are bitwise equal
 to the original file. All 90 frequency/case jobs report complete and finite.
@@ -44,8 +47,8 @@ SHA256 validates the correct file before any training.
 From the repository root on the Windows RTX machine:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts/train_expanded_pilot.py prepare
-.\.venv\Scripts\python.exe scripts/train_expanded_pilot.py run --device cuda --resume
+.\.venv\Scripts\python.exe scripts/train_expanded_pilot.py prepare --config configs/frequency_pilot_expanded.json --output outputs/frequency_expanded_v2
+.\.venv\Scripts\python.exe scripts/train_expanded_pilot.py run --config configs/frequency_pilot_expanded.json --output outputs/frequency_expanded_v2 --device cuda --resume
 ```
 
 Default counts are **10 only**, with paired seeds17/29/43. Each is initialized

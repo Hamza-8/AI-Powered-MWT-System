@@ -20,8 +20,9 @@ CSV = ROOT/"data/pilot/frequency_subsets.csv"
 pytestmark = pytest.mark.skipif(not MAT.exists(), reason="Expanded MAT is user-provided local data; copy it to data/pilot_expanded before running these integration checks")
 
 
-def config():
-    return json.loads((ROOT/"configs/frequency_pilot_expanded.json").read_text())
+def config(version=2):
+    name = "frequency_pilot_expanded.json" if version == 2 else "frequency_pilot_crossed_v3.json"
+    return json.loads((ROOT/"configs"/name).read_text())
 
 
 def test_real_extension_preserves_original_data_and_crosses_sizes():
@@ -77,9 +78,12 @@ def test_prepare_does_not_materialize_test_or_change_legacy_protocol(tmp_path,mo
     assert f.SPLITS == old_splits and f.source_identity() == source
 
 
-def test_bounded_expanded_optimizer_resume_history_initialization_and_identity(tmp_path):
+@pytest.mark.parametrize("version", [2,3])
+def test_bounded_expanded_optimizer_resume_history_initialization_and_identity(tmp_path,version):
     torch.set_num_threads(1)
-    cfg = config(); cfg.update(model=tiny_config(),grid_size=16,seeds=[17],epochs=1,patience=1,amp=False)
+    cfg = config(version); cfg.update(model=tiny_config(),grid_size=16,seeds=[17],epochs=1,patience=1,amp=False)
+    train_ids = cfg["expanded_protocol"]["splits"]["train"]
+    validation_ids = cfg["expanded_protocol"]["splits"]["validation"]
     experiment = runner.Experiment(cfg,MAT,CSV,tmp_path/"interrupted","cpu")
     first = experiment.run(max_updates=1)[0]
     assert first["status"] == "running"
@@ -87,16 +91,16 @@ def test_bounded_expanded_optimizer_resume_history_initialization_and_identity(t
     initial_bytes = initial.read_bytes()
     record = json.loads(initial_bytes)
     assert record["optimizer_updates"] == 0
-    assert [row["case_id"] for row in record["training"]["per_case"]] == [1,2,4,5,6]
+    assert [row["case_id"] for row in record["training"]["per_case"]] == train_ids
     experiment.run(resume=True,max_updates=1)
     result = experiment.run(resume=True)[0]
     saved = torch.load(tmp_path/"interrupted/K10/seed_17/resume.pt",weights_only=False)
     assert saved["progress"]["updates"] == 5 and result["status"] == "completed"
-    assert saved["preprocessing"]["fit_case_ids"] == [1,2,4,5,6]
-    assert saved["splits"]["sealed_test"] == [3] and saved["identity"]["protocol_version"] == 2
+    assert saved["preprocessing"]["fit_case_ids"] == train_ids
+    assert saved["splits"]["sealed_test"] == [3] and saved["identity"]["protocol_version"] == version
     history = saved["progress"]["history"][0]["validation"]
-    assert [row["case_id"] for row in history["per_case"]] == [7,8]
-    assert [row["case_id"] for row in history["training_fit"]["per_case"]] == [1,2,4,5,6]
+    assert [row["case_id"] for row in history["per_case"]] == validation_ids
+    assert [row["case_id"] for row in history["training_fit"]["per_case"]] == train_ids
     assert initial.read_bytes() == initial_bytes
     direct = runner.Experiment(cfg,MAT,CSV,tmp_path/"direct","cpu")
     direct.run()
@@ -105,3 +109,28 @@ def test_bounded_expanded_optimizer_resume_history_initialization_and_identity(t
     before = f.source_identity()
     assert experiment.run(resume=True)[0]["status"] == "completed"
     assert f.source_identity() == before and f.SPLITS == {"reference":[0],"train":[1,4],"validation":[2],"sealed_test":[3]}
+
+
+def test_v3_validation_uses_new_combinations_of_familiar_sizes_and_positions(tmp_path,monkeypatch):
+    cfg = config(3); cfg.update(model=tiny_config(),grid_size=16)
+    protocol = cfg["expanded_protocol"]
+    inventory = {case["id"]:case for case in protocol["cases"]}
+    def geometry(cid):
+        case=inventory[cid]
+        return case["radius_mm"],tuple(case["centre_xyz_mm"])
+    training = {geometry(cid) for cid in protocol["splits"]["train"]}
+    for cid in protocol["splits"]["validation"]:
+        radius,position = geometry(cid)
+        assert (radius,position) not in training
+        assert radius in {r for r,p in training}
+        assert position in {p for r,p in training}
+    touched=[]
+    original=runner.ExpandedPilot.__getitem__
+    def track(self,index):
+        if index < len(self): touched.append(self.ids[index])
+        return original(self,index)
+    monkeypatch.setattr(runner.ExpandedPilot,"__getitem__",track)
+    report=runner.Experiment(cfg,MAT,CSV,tmp_path,"cpu").prepare()
+    assert touched == [1,2,4,6,7,5,8]
+    assert report["protocol_version"] == 3 and not report["test_accessed"]
+    assert report["splits"] == protocol["splits"]
