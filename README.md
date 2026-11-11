@@ -74,6 +74,11 @@ The executable package is now `microscan`. Its precise implemented contracts are
 [research evidence ledger](docs/RESEARCH_EVIDENCE.md), and
 [Windows runbook](docs/WINDOWS_RUNBOOK.md).
 
+The current controlled sphere experiment is documented in the
+[pattern/amplitude pilot](docs/PATTERN_AMPLITUDE_PILOT.md), including research
+sources, the unchanged weighted training loss, final-epoch checkpoint policy and
+Windows launch commands. Start with K10 seed17 before a frequency-count campaign.
+
 In this implementation MSRNN is a feed-forward coarse inverse plus a separate full-3D
 residual enhancement U-Net; it has no recurrent unit. The reference-frequency maps
 and supervised spectral readout do not infer unlabelled Cole–Cole coefficients.
