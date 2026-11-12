@@ -83,6 +83,10 @@ The subsequent [controlled amplitude-routing test](docs/POSTNORM_AMPLITUDE_PILOT
 ablates the saved model and tests post-normalization conditioning at K10 seed17
 with an unchanged loss, split and budget. Its training benefit remains unproven.
 
+The separate [extent-loss experiment](docs/EXTENT_LOSS_PILOT.md) retains the
+pattern-v1 architecture and tests a refined soft-Dice training term at K10 seed17.
+It does not set the frequency count for head data generation.
+
 In this implementation MSRNN is a feed-forward coarse inverse plus a separate full-3D
 residual enhancement U-Net; it has no recurrent unit. The reference-frequency maps
 and supervised spectral readout do not infer unlabelled Cole–Cole coefficients.
