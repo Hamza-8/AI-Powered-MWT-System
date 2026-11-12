@@ -1,0 +1,147 @@
+{
+  "protocol_version": 3,
+  "frequency_config": {
+    "status": "pending_selection"
+  },
+  "physics_mode": "A",
+  "use_cyclegan": false,
+  "use_segmentation": false,
+  "fixed_frequency_slots": 10,
+  "grid_size": 128,
+  "seeds": [
+    17
+  ],
+  "epochs": 300,
+  "batch_size": 1,
+  "learning_rate": 0.0002,
+  "weight_decay": 1e-05,
+  "gradient_weight": 0.01,
+  "gradient_clip": 1.0,
+  "patience": 300,
+  "amp": true,
+  "model": {
+    "measurement_representation": "pattern_amplitude_v1",
+    "pattern_rms_floor": 1e-08,
+    "postnorm_amplitude": {
+      "name": "postnorm_amplitude_v1",
+      "hidden": 32,
+      "init_std": 0.02
+    }
+  },
+  "expanded_protocol": {
+    "name": "sphere_crossed_combinations_v3",
+    "data_sha256": "c80358a1271f7389c835a85fcc8361e24dbd9347d74df69523b83c82db3c1774",
+    "original_prefix_sha256": "4713f1f3f46fcf19573118e294f082b11e5cff58fbbd8bd2e7636619341b4f85",
+    "splits": {
+      "reference": [
+        0
+      ],
+      "train": [
+        1,
+        2,
+        4,
+        6,
+        7
+      ],
+      "validation": [
+        5,
+        8
+      ],
+      "sealed_test": [
+        3
+      ]
+    },
+    "cases": [
+      {
+        "id": 0,
+        "radius_mm": 0.0,
+        "centre_xyz_mm": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "id": 1,
+        "radius_mm": 15.0,
+        "centre_xyz_mm": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "id": 2,
+        "radius_mm": 15.0,
+        "centre_xyz_mm": [
+          25.0,
+          -20.0,
+          15.0
+        ]
+      },
+      {
+        "id": 3,
+        "radius_mm": 25.0,
+        "centre_xyz_mm": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "id": 4,
+        "radius_mm": 25.0,
+        "centre_xyz_mm": [
+          25.0,
+          -20.0,
+          15.0
+        ]
+      },
+      {
+        "id": 5,
+        "radius_mm": 15.0,
+        "centre_xyz_mm": [
+          -25.0,
+          15.0,
+          10.0
+        ]
+      },
+      {
+        "id": 6,
+        "radius_mm": 25.0,
+        "centre_xyz_mm": [
+          -25.0,
+          15.0,
+          10.0
+        ]
+      },
+      {
+        "id": 7,
+        "radius_mm": 15.0,
+        "centre_xyz_mm": [
+          10.0,
+          25.0,
+          -20.0
+        ]
+      },
+      {
+        "id": 8,
+        "radius_mm": 25.0,
+        "centre_xyz_mm": [
+          10.0,
+          25.0,
+          -20.0
+        ]
+      }
+    ],
+    "previous_validation_case_promoted_to_training": 2,
+    "note": "Final agreed pre-training allocation supersedes the unlaunched v2 proposal and provisional MATLAB labels. Case2 was inspected in v1 and is explicitly training. Case3 remains sealed. New validation is radius15 at B (training sees radius25 there) and radius25 at C (training sees radius15 there).",
+    "validation_geometry_ids": [
+      5,
+      8
+    ],
+    "validation_kind": "Unseen size-position combinations; both sizes and both validation positions occur in training"
+  },
+  "representation_experiment": "pattern_amplitude_v1",
+  "checkpoint_policy": "fixed_final_epoch"
+}

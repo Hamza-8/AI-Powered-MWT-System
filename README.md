@@ -65,3 +65,30 @@ The long-term objective is to develop an affordable and portable platform for re
 By prioritizing change detection rather than attempting to immediately reproduce the full diagnostic detail of MRI or CT, MicroScan aims to establish a technically achievable and clinically relevant first application for microwave brain imaging.
 
 Important: MicroScan is an experimental research project and is not a certified medical device. It must not be used for diagnosis, patient monitoring, or treatment decisions outside appropriately supervised and approved research.
+
+## Rebuilt implementation
+
+The executable package is now `microscan`. Its precise implemented contracts are in
+[the rebuilt architecture](docs/FINAL_MICROSCAN_ARCHITECTURE.md),
+[data export schema](docs/DATA_EXPORT_SCHEMA.md),
+[research evidence ledger](docs/RESEARCH_EVIDENCE.md), and
+[Windows runbook](docs/WINDOWS_RUNBOOK.md).
+
+The current controlled sphere experiment is documented in the
+[pattern/amplitude pilot](docs/PATTERN_AMPLITUDE_PILOT.md), including research
+sources, the unchanged weighted training loss, final-epoch checkpoint policy and
+Windows launch commands. Start with K10 seed17 before a frequency-count campaign.
+
+The subsequent [controlled amplitude-routing test](docs/POSTNORM_AMPLITUDE_PILOT.md)
+ablates the saved model and tests post-normalization conditioning at K10 seed17
+with an unchanged loss, split and budget. Its training benefit remains unproven.
+
+The separate [extent-loss experiment](docs/EXTENT_LOSS_PILOT.md) retains the
+pattern-v1 architecture and tests a refined soft-Dice training term at K10 seed17.
+It does not set the frequency count for head data generation.
+
+In this implementation MSRNN is a feed-forward coarse inverse plus a separate full-3D
+residual enhancement U-Net; it has no recurrent unit. The reference-frequency maps
+and supervised spectral readout do not infer unlabelled Cole–Cole coefficients.
+Frequency selection is pending; no scientific training or target-GPU performance
+is established by the structural implementation checks.

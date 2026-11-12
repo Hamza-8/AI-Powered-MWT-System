@@ -1,0 +1,2 @@
+"""MicroScan calibrated microwave reconstruction research package."""
+__version__ = "0.1.0"

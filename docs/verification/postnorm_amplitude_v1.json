@@ -1,0 +1,52 @@
+{
+  "scope": "implementation verification; not a completed training comparison",
+  "tests": {
+    "command": "python -m pytest -q",
+    "passed": 118,
+    "seconds": 18.17,
+    "private_integration": "local expanded MAT, baseline checkpoint and ablation evidence present; relevant tests skip without them"
+  },
+  "synthetic_native_profile": {
+    "evidence": "one synthetic-input structural profile; no accuracy evidence",
+    "representation": "pattern_amplitude_v1",
+    "device": "cpu",
+    "torch": "2.5.1+cpu",
+    "amp": false,
+    "backward": true,
+    "parameters": 4003289,
+    "shape": [
+      1,
+      2,
+      128,
+      128,
+      128
+    ],
+    "seconds": 35.14432278000095,
+    "peak_cuda_bytes": null,
+    "targeted_adjustment": "postnorm_amplitude_v1"
+  },
+  "native_optimizer_check": {
+    "grid_size": 128,
+    "k": 10,
+    "seed": 17,
+    "updates": 1,
+    "completed_training": false,
+    "new_parameter_tensors_updated": 16,
+    "finite_weights": true,
+    "test_accessed": false
+  },
+  "production_training": {
+    "status": "blocked_cuda_unavailable",
+    "cuda_available": false,
+    "torch": "2.5.1+cpu",
+    "completed": false,
+    "completed_candidate_metrics_available": false
+  },
+  "original_sources_and_baseline_checkpoint_unchanged": true,
+  "source_sha256": {
+    "scripts/diagnose_amplitude_conditioning.py": "c235da11c9bf6ee6530c2eb151eb6b6fb3040467c8324d6ef7ab33fcf1130583",
+    "scripts/postnorm_amplitude_model.py": "ba0eab5a853ab9c4acaa47014d0feb590de37b550391cb796ad491597140657e",
+    "scripts/train_postnorm_pilot.py": "862439c3967a9104531e167672e78692a7596ff4b1ddb878dad3ebb0942f0570",
+    "configs/frequency_pilot_postnorm_v1.json": "c865e1d1fdcf8adf293b74a670b4b166fb0c030edde6597d3ffcbdd627b337e2"
+  }
+}

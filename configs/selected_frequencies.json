@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "status": "pending_selection",
+  "reason": "Run and explicitly select the reconstruction-frequency pilot; no frequency count is established.",
+  "fixed_grid_ghz": [
+    0.6,
+    0.65,
+    0.7,
+    0.75,
+    0.8,
+    0.85,
+    0.9,
+    0.95,
+    1.0,
+    1.05
+  ],
+  "selected_indices_zero_based": null,
+  "selected_frequencies_ghz": null
+}

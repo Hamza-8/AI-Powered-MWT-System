@@ -1,0 +1,53 @@
+{
+  "scope": "loss-only implementation verification; no completed accuracy comparison",
+  "tests": {
+    "command": "python -m pytest -q",
+    "passed": 125,
+    "seconds": 26.39,
+    "private_fixture_note": "expanded MAT and baseline present locally; relevant integration test skips without them"
+  },
+  "native_synthetic_profile": {
+    "scope": "synthetic native objective verification; no accuracy evidence",
+    "torch": "2.5.1+cpu",
+    "device": "cpu",
+    "amp": false,
+    "backward": true,
+    "shape": [
+      1,
+      2,
+      128,
+      128,
+      128
+    ],
+    "parameters": 3986937,
+    "base_loss": 0.4607822000980377,
+    "extent_loss": 0.9442709684371948,
+    "total_loss": 0.5552092790603638,
+    "seconds": 18.526198842999293,
+    "peak_cuda_bytes": null
+  },
+  "native_optimizer_check": {
+    "grid_size": 128,
+    "k": 10,
+    "seed": 17,
+    "updates": 1,
+    "complete_training": false,
+    "parameter_tensors_changed": 130,
+    "finite_weights": true,
+    "objective_accounting_verified": true,
+    "architecture_unchanged": true,
+    "test_accessed": false
+  },
+  "cuda_training": {
+    "status": "blocked_cuda_unavailable",
+    "torch": "2.5.1+cpu",
+    "cuda_available": false,
+    "completed": false,
+    "candidate_validation_improvement": "not_measured"
+  },
+  "original_checkpoint_and_package_sources_unchanged": true,
+  "source_sha256": {
+    "scripts/train_extent_pilot.py": "fe1c97dc8fbc039fadc4f42ae83ab4f4d4dc532747d9aef69eb9fed8f0f17b6a",
+    "configs/frequency_pilot_extent_v1.json": "0dbbb127bc81107a9201551901c1133a445eb027c3e25ef8da1a138913d73100"
+  }
+}

@@ -1,0 +1,8 @@
+# Rebuild verification environment only. DO NOT use on the target RTX machine.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1+cpu
+numpy==2.5.4
+scipy==1.18.1
+h5py==3.16.0
+pytest==9.2.0
+PyYAML==6.0.3

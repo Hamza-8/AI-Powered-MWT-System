@@ -1,0 +1,31 @@
+{
+  "protocol_version": 1,
+  "frequency_config": {
+    "status": "pending_selection"
+  },
+  "physics_mode": "A",
+  "use_cyclegan": false,
+  "use_segmentation": false,
+  "fixed_frequency_slots": 10,
+  "grid_size": 128,
+  "seeds": [
+    17,
+    29,
+    43
+  ],
+  "epochs": 300,
+  "batch_size": 1,
+  "learning_rate": 0.0002,
+  "weight_decay": 1e-05,
+  "gradient_weight": 0.01,
+  "gradient_clip": 1.0,
+  "patience": 300,
+  "minimum_delta": 1e-06,
+  "amp": true,
+  "model": {},
+  "selection": {
+    "baseline_improvement_fraction": 0.05,
+    "max_localization_error_mm": 10.0,
+    "max_relative_volume_error": 0.5
+  }
+}

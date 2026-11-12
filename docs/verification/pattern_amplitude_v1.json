@@ -1,0 +1,55 @@
+{
+  "scope": "implementation verification only; no trained accuracy claim",
+  "tests": {
+    "command": "python -m pytest -q",
+    "passed": 105,
+    "seconds": 33.87,
+    "private_mat_integration": "local expanded MAT present; those tests skip without it"
+  },
+  "native_profile": {
+    "evidence": "one synthetic-input structural profile; no accuracy evidence",
+    "representation": "pattern_amplitude_v1",
+    "device": "cpu",
+    "torch": "2.5.1+cpu",
+    "amp": false,
+    "backward": true,
+    "parameters": 3986937,
+    "shape": [
+      1,
+      2,
+      128,
+      128,
+      128
+    ],
+    "seconds": 23.327896655000586,
+    "peak_cuda_bytes": null
+  },
+  "preparation": {
+    "grid_size": 128,
+    "training_cases": [
+      1,
+      2,
+      4,
+      6,
+      7
+    ],
+    "validation_cases": [
+      5,
+      8
+    ],
+    "sealed_test": [
+      3
+    ],
+    "test_accessed": false,
+    "balanced_score_present": false
+  },
+  "checkpoint_policy": "fixed_final_epoch",
+  "source_sha256": {
+    "scripts/pattern_amplitude_model.py": "1cce771376e1f43053eda4daff5dee59ae44cb2da517d67cbe8979c9c964ff4d",
+    "scripts/train_pattern_pilot.py": "231af72e52035e615fa93c1392fa2c0322fc06e9e12268402286cd942e1910dc",
+    "scripts/train_expanded_pilot.py": "e32bce2c07740d5821ffaedf17b1b6849ffa3bdb19cfc098d10d73c2adb0e510",
+    "configs/frequency_pilot_pattern_v1.json": "a63fdb5bc0ca9db1cf392c10a32f4ab461a360c627691762bf8c232087406f00"
+  },
+  "cuda_verified": false,
+  "accuracy_training_campaign_started": false
+}

@@ -1,0 +1,147 @@
+{
+  "scope": "fresh structural CPU eval/no_grad only; untrained weights; not scientific accuracy or CUDA validation",
+  "torch_version": "2.5.1+cpu",
+  "cuda_available": false,
+  "source_sha256": {
+    "__init__.py": "3eca9a71c1f966376f32aed52484f15646c320de80adf3d1239156d7ac7e11d8",
+    "__main__.py": "3129adff95e0f38b87ab34cddfc27082c7892bcaec267ff5d40f160fdf55b44a",
+    "acquisition.py": "91585d9c50efc11dbab00b451ac587e85016ffb58353cbac0412ee39f1356e36",
+    "checkpoint.py": "84e87b9631f39bdf5cbdb42e6ad4d9baa244c6f997fe0a6d069e6213fcef499a",
+    "cli.py": "14b77751f01522eb1d6537d30b291fc820b49799cc75e0f5bcb46601ff4be025",
+    "data.py": "cd2804df87708a9b59350be3da0d013212c73ede859e5e9e1ab0e959852ff810",
+    "evaluation.py": "f96ecdf6953e28362b797d55611d30b9547557a98efe2d558fbb34818480dc12",
+    "frequency.py": "bb570f1290d9fe749c3a170b2a543c2e9d7db6a0aef3060a511adc93d515d7ee",
+    "gan.py": "c13150530af8700ab69d6bf0bfc2e3331f414fa47ec0ca40a3fab9ff79bc2ec0",
+    "losses.py": "5e71f1ab31a0ce10da5f7c95e2e779c6bf691516ff46646531418cc6dda90279",
+    "metrics.py": "48aa23941d1c9e2764e52b1160fc695d9fc5a711df5ef10c9db473797896ed91",
+    "models.py": "f4ec9731bc0f782ad82bc1ad9724065491b013984bee7cbb4ab0a385abc5d62f",
+    "physics.py": "564d33c31d5c7e71e5d76f49f0340aaeb4d6cbbbc7af95c5f4da1451e5d8b7d7",
+    "pipeline.py": "33d0990fe56e38ba7c92a1fcfd82d1976315e9fa36d32bd060ddbc39c0521c3a",
+    "preprocessing.py": "57edc27fad25aab4326840be07623e59a2d630c7fafd38581be6cabbb15fd988",
+    "subspace.py": "28a58ab821cc3e0239e438f3b5fde251b32bce6599a9f1b8466b15fdec31fa8c",
+    "training.py": "77821dfb80196d8bf7e649e2e42ea8c9d39f5a12a73e11d340ea9329f273f66c"
+  },
+  "forwards": {
+    "MSRNN": {
+      "input_shape": [
+        1,
+        2,
+        10,
+        18,
+        18
+      ],
+      "coarse_shape": [
+        1,
+        2,
+        128,
+        128,
+        128
+      ],
+      "refined_shape": [
+        1,
+        2,
+        128,
+        128,
+        128
+      ],
+      "parameters": 3903065,
+      "seconds": 7.250796824999952,
+      "finite": true,
+      "encoder_output_shape": [
+        1,
+        256,
+        51
+      ],
+      "adapter_shape": [
+        1,
+        1024,
+        32
+      ],
+      "latent_shape": [
+        1,
+        64,
+        8,
+        8,
+        8
+      ]
+    },
+    "segmentation": {
+      "input_shape": [
+        1,
+        2,
+        128,
+        128,
+        128
+      ],
+      "output_shape": [
+        1,
+        5,
+        128,
+        128,
+        128
+      ],
+      "parameters": 8044389,
+      "seconds": 6.2535402849999855,
+      "finite": true
+    },
+    "GAN_3": {
+      "input_shape": [
+        1,
+        2,
+        3,
+        18,
+        18
+      ],
+      "generator_output_shape": [
+        1,
+        2,
+        3,
+        18,
+        18
+      ],
+      "discriminator_output_shape": [
+        1,
+        1,
+        3,
+        2,
+        2
+      ],
+      "seconds": 0.04002238299995042,
+      "finite": true,
+      "G_parameters": 21981493,
+      "F_parameters": 21981493,
+      "D_X_parameters": 1173793,
+      "D_Y_parameters": 1173793
+    },
+    "GAN_10": {
+      "input_shape": [
+        1,
+        2,
+        10,
+        18,
+        18
+      ],
+      "generator_output_shape": [
+        1,
+        2,
+        10,
+        18,
+        18
+      ],
+      "discriminator_output_shape": [
+        1,
+        1,
+        10,
+        2,
+        2
+      ],
+      "seconds": 0.14360988100008854,
+      "finite": true,
+      "G_parameters": 21981493,
+      "F_parameters": 21981493,
+      "D_X_parameters": 1173793,
+      "D_Y_parameters": 1173793
+    }
+  },
+  "peak_process_rss_kib": 1604188
+}
